@@ -35,7 +35,7 @@ async def run_full_scan_and_generate_report():
 
 @app.get('/', response_class=HTMLResponse)
 async def root(request: Request):
-    return templates.TemplateResponse('app/templates/index.html', {'request': request, 'status': job_status})
+    return templates.TemplateResponse('index.html', {'request': request, 'status': job_status})
 
 @app.post('/scan/full')
 async def trigger_full_scan(request: Request, background_tasks: BackgroundTasks):
