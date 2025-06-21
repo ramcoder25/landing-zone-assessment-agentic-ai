@@ -18,16 +18,16 @@ app.mount('/reports', StaticFiles(directory='reports'), name='reports')
 
 job_status = {'status': 'idle', 'message': 'Ready to start.', 'report_path': None}
 
-def run_full_scan_and_generate_report():
+async def run_full_scan_and_generate_report():
     try:
         job_status.update({'status': 'running', 'message': 'Initializing Azure credentials...'})
         credential = DefaultAzureCredential()
         job_status['message'] = 'Scanning all Azure resources... This may take several minutes.'
-        (all_resources, subscriptions) = scan_full_environment(credential)
+        all_resources, subscriptions = await scan_full_environment(credential)
         job_status['message'] = f'Scan complete. Found {len(all_resources)} resources. Analyzing dependencies and risks...'
-        analyzed_graph = analyze_for_risks_and_dependencies(all_resources, subscriptions)
+        analyzed_graph = await analyze_for_risks_and_dependencies(all_resources, subscriptions)
         job_status['message'] = 'Generating interactive visualization...'
-        report_filename = create_graph_visualization(analyzed_graph)
+        report_filename = await create_graph_visualization(analyzed_graph)
         job_status.update({'status': 'complete', 'message': f'Report generated successfully.', 'report_path': f'/reports/{report_filename}'})
     except Exception as e:
         logging.error(f'Full scan failed: {e}', exc_info=True)
@@ -35,10 +35,10 @@ def run_full_scan_and_generate_report():
 
 @app.get('/', response_class=HTMLResponse)
 async def root(request: Request):
-    return templates.TemplateResponse('index.html', {'request': request})
+    return templates.TemplateResponse('app/templates/index.html', {'request': request, 'status': job_status})
 
 @app.post('/scan/full')
-async def trigger_full_scan(background_tasks: BackgroundTasks):
+async def trigger_full_scan(request: Request, background_tasks: BackgroundTasks):
     if job_status['status'] == 'running':
         return JSONResponse(status_code=409, content={'message': 'A scan is already in progress.'})
     background_tasks.add_task(run_full_scan_and_generate_report)
