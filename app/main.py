@@ -27,7 +27,7 @@ async def run_full_scan_and_generate_report():
         job_status['message'] = f'Scan complete. Found {len(all_resources)} resources. Analyzing dependencies and risks...'
         analyzed_graph = analyze_for_risks_and_dependencies(all_resources, subscriptions)
         job_status['message'] = 'Generating interactive visualization...'
-        report_filename = await create_graph_visualization(analyzed_graph)
+        report_filename = create_graph_visualization(analyzed_graph)
         job_status.update({'status': 'complete', 'message': f'Report generated successfully.', 'report_path': f'/reports/{report_filename}'})
     except Exception as e:
         logging.error(f'Full scan failed: {e}', exc_info=True)
