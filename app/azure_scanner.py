@@ -1,49 +1,60 @@
-import os
+import asyncio
 import logging
-from fastapi import FastAPI, Request, BackgroundTasks
-from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.templating import Jinja2Templates
-from fastapi.staticfiles import StaticFiles
-from azure.identity import DefaultAzureCredential
-from azure_scanner import scan_full_environment, scan_targeted_resource
-from risk_analyzer import analyze_for_risks_and_dependencies
-from visualizer import create_graph_visualization
+from azure.identity.aio import DefaultAzureCredential
+from azure.mgmt.resource.subscriptions.aio import SubscriptionClient
+from azure.mgmt.network.aio import NetworkManagementClient
+from azure.mgmt.compute.aio import ComputeManagementClient
+from azure.mgmt.storage.aio import StorageManagementClient
+from azure.core.exceptions import HttpResponseError
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-app = FastAPI(title='Agentic Azure Visualizer')
-templates = Jinja2Templates(directory='app/templates')
-os.makedirs('reports', exist_ok=True)
-app.mount('/reports', StaticFiles(directory='reports'), name='reports')
-
-job_status = {'status': 'idle', 'message': 'Ready to start.', 'report_path': None}
-
-def run_full_scan_and_generate_report():
+async def get_subscriptions(credential: DefaultAzureCredential):
+    subs_data = []
     try:
-        job_status.update({'status': 'running', 'message': 'Initializing Azure credentials...'})
-        credential = DefaultAzureCredential()
-        job_status['message'] = 'Scanning all Azure resources... This may take several minutes.'
-        (all_resources, subscriptions) = scan_full_environment(credential)
-        job_status['message'] = f'Scan complete. Found {len(all_resources)} resources. Analyzing dependencies and risks...'
-        analyzed_graph = analyze_for_risks_and_dependencies(all_resources, subscriptions)
-        job_status['message'] = 'Generating interactive visualization...'
-        report_filename = create_graph_visualization(analyzed_graph)
-        job_status.update({'status': 'complete', 'message': f'Report generated successfully.', 'report_path': f'/reports/{report_filename}'})
+        subscription_client = SubscriptionClient(credential)
+        async for sub in subscription_client.subscriptions.list():
+            subs_data.append({'id': sub.id, 'subscription_id': sub.subscription_id, 'display_name': sub.display_name})
     except Exception as e:
-        logging.error(f'Full scan failed: {e}', exc_info=True)
-        job_status.update({'status': 'error', 'message': f'An error occurred: {str(e)}'})
+        logging.error(f'Could not list subscriptions: {e}')
+    return subs_data
 
-@app.get('/', response_class=HTMLResponse)
-async def root(request: Request):
-    return templates.TemplateResponse('index.html', {'request': request})
+async def scan_subscription_resources(sub, credential):
+    sub_id = sub['subscription_id']
+    logging.info(f"Scanning subscription: {sub['display_name']} ({sub_id})")
+    resources = []
+    try:
+        network_client = NetworkManagementClient(credential, sub_id)
+        compute_client = ComputeManagementClient(credential, sub_id)
+        storage_client = StorageManagementClient(credential, sub_id)
+        tasks = [network_client.virtual_networks.list_all(), network_client.network_security_groups.list_all(), network_client.route_tables.list_all(), compute_client.virtual_machines.list_all(), storage_client.storage_accounts.list()]
+        results = await asyncio.gather(*[asyncio.create_task(t) for t in tasks], return_exceptions=True)
+        for result in results:
+            if isinstance(result, Exception):
+                logging.warning(f'An API call failed in {sub_id}: {result}')
+                continue
+            async for item in result:
+                resources.append(item.as_dict())
+    except Exception as e:
+        logging.error(f'Failed to process subscription {sub_id}: {e}')
+    finally:
+        if 'network_client' in locals():
+            await network_client.close()
+        if 'compute_client' in locals():
+            await compute_client.close()
+        if 'storage_client' in locals():
+            await storage_client.close()
+    return resources
 
-@app.post('/scan/full')
-async def trigger_full_scan(background_tasks: BackgroundTasks):
-    if job_status['status'] == 'running':
-        return JSONResponse(status_code=409, content={'message': 'A scan is already in progress.'})
-    background_tasks.add_task(run_full_scan_and_generate_report)
-    return JSONResponse(status_code=202, content={'message': 'Full environment scan initiated.'})
+async def scan_full_environment(credential: DefaultAzureCredential):
+    all_resources = []
+    subscriptions = await get_subscriptions(credential)
+    if not subscriptions:
+        raise Exception("No subscriptions found. Check the ACI's Managed Identity permissions.")
+    scan_tasks = [scan_subscription_resources(sub, credential) for sub in subscriptions]
+    results = await asyncio.gather(*scan_tasks)
+    for res_list in results:
+        all_resources.extend(res_list)
+    return (all_resources, subscriptions)
 
-@app.get('/status')
-async def get_status():
-    return JSONResponse(content=job_status)
+async def scan_targeted_resource(credential: DefaultAzureCredential, resource_id: str):
+    logging.info(f'Targeted scan for: {resource_id}')
+    return {'message': 'Targeted scan not fully implemented yet.'}
