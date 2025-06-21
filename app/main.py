@@ -5,9 +5,9 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from azure.identity import DefaultAzureCredential
-from azure_scanner import scan_full_environment, scan_targeted_resource
-from risk_analyzer import analyze_for_risks_and_dependencies
-from visualizer import create_graph_visualization
+from app.azure_scanner import scan_full_environment, scan_targeted_resource
+from app.risk_analyzer import analyze_for_risks_and_dependencies
+from app.visualizer import create_graph_visualization
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
